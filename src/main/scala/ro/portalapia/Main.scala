@@ -2,13 +2,11 @@ package ro.portalapia
 
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
-import java.util.concurrent.{Executors, ThreadFactory}
 
 import cats.effect.IO
-import com.softwaremill.sttp.SttpBackend
+import com.softwaremill.sttp.{SttpBackend, SttpBackendOptions}
 import com.softwaremill.sttp.asynchttpclient.fs2.AsyncHttpClientFs2Backend
 import fs2.Stream
-import io.netty.util.concurrent.DefaultThreadFactory
 import ro.portalapia.http._
 import ro.portalapia.pdf.{fillAnnex, _}
 
@@ -20,7 +18,10 @@ import scalafx.scene.control.{Button, Label, TextField}
 import scalafx.scene.layout.{GridPane, Pane}
 
 object Main extends JFXApp {
+
   implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO]()
+  val scalaFxExecutionContext: ExecutionContext = ExecutionContext.fromExecutor((r: Runnable) => Platform.runLater(r))
+
   val user: TextField = new TextField
   val password: TextField = new TextField
   val fetchParcelButton: Button = new Button {
@@ -59,27 +60,30 @@ object Main extends JFXApp {
   user.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.isEmpty || password.text.value.isEmpty)
   password.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.isEmpty || user.text.value.isEmpty)
 
-
-  ExecutionContext.fromExecutor(Executors.newCachedThreadPool(new ThreadFactory {
-    override def newThread(r: Runnable): Thread =
-  }))
-  fetchParcelButton.onMouseClicked = _ => for {
+  fetchParcelButton.onMouseClicked = _ => (for {
     either <- fetchParcelContent(User(user.text.value), Password(password.text.value), 2017).map(_.map(bs => (bs, zootechnic(bs))))
-    _ <- IO.shift
+    _ <- IO.shift(scalaFxExecutionContext)
+    _ <- addZootechnicNodes(either)
+  } yield ()).unsafeRunAsync(_ => ())
+
+  private def addZootechnicNodes(either: Either[String, (Array[Byte], Either[String, Seq[parser.Col]])]): IO[Unit] = either match {
+    case Right((bs, Right(cols))) =>
+      val tfs = cols.foldLeft(List[ColTextField]()) { (tfs, col) =>
+        val tf = ColTextField(col)
+        gridPane.add(tf, tfs.size + 1, 3)
+        tf :: tfs
+      }
+      gridPane.add(printButton, 1, 4)
+      printButton.onMouseClicked = _ => for {
+        annex <- fillAnnex(user.text.value, tfs.foldRight(List[parser.Col]())((tf, cols) => tf.col.copy(v = Some(tf.text.value)) :: cols), bs)
+        _ <- print(annex)
+      } yield ()
+      IO()
+    case Left(err) =>
+      gridPane.add(label("Eroare: " + err), 1, 3)
+      printButton.disable = true
+      IO()
   }
-      .map {
-        case (bs, Right(cols)) =>
-          val tfs = cols.foldLeft(List[ColTextField]()) { (tfs, col) =>
-            val tf = ColTextField(col)
-            gridPane.add(tf, tfs.size + 1, 3)
-            tf :: tfs
-          }
-          gridPane.add(printButton, 1, 1)
-          printButton.onMouseClicked = _ => for {
-            annex <- fillAnnex(user.text.value, tfs.foldRight(List[parser.Col]())((tf, cols) => tf.col.copy(v = Some(tf.text.value)) :: cols), bs)
-            _ <- print(annex)
-          } yield ()
-      }).unsafeRunSync()
 
   def label(s: String): Label = {
     new Label {
@@ -88,7 +92,9 @@ object Main extends JFXApp {
     }
   }
 
-  def space: Pane = new Pane { prefHeight = 12 }
+  def space: Pane = new Pane {
+    prefHeight = 12
+  }
 
   def print(annexToPrint: Array[Byte]): Either[String, Unit] = {
     import javax.print.DocFlavor

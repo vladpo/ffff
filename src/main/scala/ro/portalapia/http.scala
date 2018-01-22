@@ -1,11 +1,7 @@
 package ro.portalapia
 
-import java.nio.ByteBuffer
-
 import com.softwaremill.sttp._
-import com.softwaremill.sttp.asynchttpclient.fs2.AsyncHttpClientFs2Backend
 import cats.effect.IO
-import fs2.Stream
 
 object http {
 
