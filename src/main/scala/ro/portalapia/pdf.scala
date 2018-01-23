@@ -28,10 +28,10 @@ object pdf {
   case class M(name: String, days: Int, fedFactor: Int = 1, alfalfaAvg: Float = 0.0f)
 
   private lazy val months = Seq(
-    M("Ianuarie", daysOfMonth(1)), M("Februarie", daysOfMonth(2)), M("Martie", daysOfMonth(3)), M("Aprilie", daysOfMonth(4), fedFactor = 0),
     M("Mai", daysOfMonth(5), fedFactor = 0, alfalfaAvg = 2.0f), M("Iunie", daysOfMonth(6), fedFactor = 0), M("Iulie", daysOfMonth(7), fedFactor = 0, alfalfaAvg = 1.2f),
     M("August", daysOfMonth(8), fedFactor = 0), M("Septembrie", daysOfMonth(9), fedFactor = 0, alfalfaAvg = 0.8f), M("Octombrie", daysOfMonth(10), fedFactor = 0),
-    M("Noiembrie", daysOfMonth(11)), M("Decembrie", daysOfMonth(12)))
+    M("Noiembrie", daysOfMonth(11)), M("Decembrie", daysOfMonth(12)), M("Ianuarie", daysOfMonth(1)), M("Februarie", daysOfMonth(2)), M("Martie", daysOfMonth(3)),
+    M("Aprilie", daysOfMonth(4), fedFactor = 0))
 
   private lazy val legend = Seq("*) Calculul efectivului mediu furajat din ferm\u0103 se completeaz\u0103 lunar \u015fi anual pe fiecare specie \u015fi categorie de animale.",
     "\n**) (col. 5) efectiv la sf\u00e2r\u015fitul perioadei reprezint\u0103 \u015fi efectiv la \u00eenceputul lunii/perioadei urm\u0103toare",
@@ -64,10 +64,10 @@ object pdf {
   }
 
 
-  def fillAnnex(farmerId: String, zootechnic: scala.List[Col], bs: Array[Byte]): Either[String, Array[Byte]] = {
+  def fillAnnex(farmerId: String, zootechnic: scala.List[Col], bs: Array[Byte], storedAlfalfa: Double): Either[String, Array[Byte]] = {
     val pdfDoc = asPdfDoc(bs)
     (farmer(farmerId, pdfDoc), alfalfa(pdfDoc)) match {
-      case (Right(farmer), Right(alfalfa)) => Right(buildPdf(farmer, zootechnic, alfalfa))
+      case (Right(farmer), Right(alfalfa)) => Right(buildPdf(farmer, zootechnic, alfalfa - storedAlfalfa))
       case (Left(err), _) => Left(err)
       case (_, Left(err)) => Left(err)
     }

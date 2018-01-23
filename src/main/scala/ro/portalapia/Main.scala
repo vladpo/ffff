@@ -11,6 +11,7 @@ import fs2.Stream
 import ro.portalapia.http._
 import ro.portalapia.pdf.{fillAnnex, _}
 
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext
 import scalafx.application.{JFXApp, Platform}
 import scalafx.geometry.Insets
@@ -23,8 +24,9 @@ object Main extends JFXApp {
   implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO](httpProxy("proxy-cluj", 9876))
   val scalaFxExecutionContext: ExecutionContext = ExecutionContext.fromExecutor((r: Runnable) => Platform.runLater(r))
 
-  val user: TextField = new TextField {minWidth = 100; maxWidth = 100; text = "RO274187369"}
-  val password: TextField = new TextField {minWidth = 100; maxWidth = 100; text = "1690219264386"}
+  val user: TextField = loginTf("RO274187369")
+  val password: TextField = loginTf("1690219264386")
+  val storedAlfalfa: TextField = loginTf("0")
   val fetchParcelButton: Button = new Button {
     text = "Afiseaza animale"
     disable = user.text.value.isEmpty || password.text.value.isEmpty
@@ -32,7 +34,7 @@ object Main extends JFXApp {
   val nodes: Seq[Node] = Seq(new HBox {
     spacing = 3
     margin = Insets(12)
-    children = Seq(label("Nume utilizator"), user, label("Parola"), password, fetchParcelButton)
+    children = Seq(label("Nume utilizator"), user, label("Parola"), password, label("Lucerna dep."), storedAlfalfa, fetchParcelButton)
   })
   val container: VBox = new VBox {
     spacing = 6
@@ -42,7 +44,7 @@ object Main extends JFXApp {
 
   stage = new JFXApp.PrimaryStage {
     title.value = "Apia Portal"
-    width = 700
+    width = 800
     height = 400
     scene = new Scene {
       content = container
@@ -74,20 +76,36 @@ object Main extends JFXApp {
 
   private def addZootechnicNodes(either: Either[String, (Array[Byte], Either[String, Seq[parser.Col]])]): IO[Seq[Node]] = either match {
     case Right((bs, Right(cols))) =>
-      val colPanes = cols.foldLeft(Seq[ColPane]())((panes, col) => panes :+ ColPane(col))
+      val colBoxes = ArrayBuffer[ColBox]()
+      val vBoxes = cols.grouped(4).map{ gr =>
+        val cbs = gr.map(ColBox)
+        colBoxes ++= cbs
+        new HBox{ children = cbs}
+      }.toList
       printButton.onMouseClicked = _ =>
-        fillAnnex(user.text.value, colPanes.foldRight(List[parser.Col]())((colPane, cols) =>
-          colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs).map(print)
-      IO(nodes :+ new HBox {margin = Insets(12); children = colPanes } :+ printButton)
+        fillAnnex(user.text.value, colBoxes.foldRight(List[parser.Col]())((colPane, cols) =>
+          colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs, storedAlfalfa.text.value.toDouble).map(print).fold(println(_), _ => ())
+      IO(nodes :+ new VBox {margin = Insets(12); children = vBoxes } :+ printButton)
     case Left(err) =>
       printButton.disable = true
       IO(nodes :+ label("Eroare: " + err))
   }
 
+  def loginTf(value: String): TextField = new TextField {minWidth = 110; maxWidth = 110; text = value}
+
   def label(s: String): Label = {
     new Label {
       margin = Insets(6)
       text = s
+    }
+  }
+
+  def fixLabel(s: String): Label = {
+    new Label {
+      margin = Insets(6)
+      text = s
+      minWidth = 135
+      maxWidth = 135
     }
   }
 
@@ -116,14 +134,14 @@ object Main extends JFXApp {
 
   private case class ColTextField(col: parser.Col) extends TextField {
     text = col.valueAsText
-    minWidth = 50
-    maxWidth = 50
+    minWidth = 135
+    maxWidth = 135
   }
 
-  private case class ColPane(col: parser.Col) extends VBox {
+  private case class ColBox(col: parser.Col) extends VBox {
     val tf = ColTextField(col)
     margin = Insets(0, 5, 0, 0)
-    children = Seq(label(col.h.name), tf)
+    children = Seq(fixLabel(col.h.name), tf)
   }
 }
 
