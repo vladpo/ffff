@@ -4,7 +4,8 @@ import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 
 import cats.effect.IO
-import com.softwaremill.sttp.{SttpBackend, SttpBackendOptions}
+import com.softwaremill.sttp.SttpBackend
+import com.softwaremill.sttp.SttpBackendOptions._
 import com.softwaremill.sttp.asynchttpclient.fs2.AsyncHttpClientFs2Backend
 import fs2.Stream
 import ro.portalapia.http._
@@ -13,48 +14,49 @@ import ro.portalapia.pdf.{fillAnnex, _}
 import scala.concurrent.ExecutionContext
 import scalafx.application.{JFXApp, Platform}
 import scalafx.geometry.Insets
-import scalafx.scene.Scene
+import scalafx.scene.{Node, Scene}
 import scalafx.scene.control.{Button, Label, TextField}
-import scalafx.scene.layout.{GridPane, Pane}
+import scalafx.scene.layout.{HBox, VBox}
 
 object Main extends JFXApp {
 
-  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO]()
+  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO](httpProxy("proxy-cluj", 9876))
   val scalaFxExecutionContext: ExecutionContext = ExecutionContext.fromExecutor((r: Runnable) => Platform.runLater(r))
 
-  val user: TextField = new TextField
-  val password: TextField = new TextField
+  val user: TextField = new TextField {minWidth = 100; maxWidth = 100; text = "RO274187369"}
+  val password: TextField = new TextField {minWidth = 100; maxWidth = 100; text = "1690219264386"}
   val fetchParcelButton: Button = new Button {
     text = "Afiseaza animale"
-    disable = true
-    margin = Insets(6)
+    disable = user.text.value.isEmpty || password.text.value.isEmpty
   }
-  val gridPane: GridPane = new GridPane {
+  val nodes: Seq[Node] = Seq(new HBox {
+    spacing = 3
+    margin = Insets(12)
+    children = Seq(label("Nume utilizator"), user, label("Parola"), password, fetchParcelButton)
+  })
+  val container: VBox = new VBox {
+    spacing = 6
     margin = Insets(21)
-    add(label("Nume utilizator"), 1, 1)
-    add(user, 2, 1)
-    add(label("Parola"), 3, 1)
-    add(password, 4, 1)
-    add(fetchParcelButton, 5, 1)
-    add(space, 1, 2, 5, 1)
+    children = nodes
   }
+
   stage = new JFXApp.PrimaryStage {
     title.value = "Apia Portal"
-    width = 600
+    width = 700
     height = 400
     scene = new Scene {
-      content = gridPane
+      content = container
       Platform.runLater(user.requestFocus())
     }
     onCloseRequest = _ => {
       client.close()
-      close()
+      Platform.exit()
     }
   }
+
   val printButton: Button = new Button {
     text = "Printeaza anexele"
-    visible = false
-    margin = Insets(6)
+    margin = Insets(12)
   }
 
   user.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.isEmpty || password.text.value.isEmpty)
@@ -63,26 +65,23 @@ object Main extends JFXApp {
   fetchParcelButton.onMouseClicked = _ => (for {
     either <- fetchParcelContent(User(user.text.value), Password(password.text.value), 2017).map(_.map(bs => (bs, zootechnic(bs))))
     _ <- IO.shift(scalaFxExecutionContext)
-    _ <- addZootechnicNodes(either)
-  } yield ()).unsafeRunAsync(_ => ())
+    nodes <- addZootechnicNodes(either)
+    _ <- IO(container.children = nodes)
+  } yield ()).unsafeRunAsync {
+    case Right(()) =>
+    case Left(err) => println(err)
+  }
 
-  private def addZootechnicNodes(either: Either[String, (Array[Byte], Either[String, Seq[parser.Col]])]): IO[Unit] = either match {
+  private def addZootechnicNodes(either: Either[String, (Array[Byte], Either[String, Seq[parser.Col]])]): IO[Seq[Node]] = either match {
     case Right((bs, Right(cols))) =>
-      val tfs = cols.foldLeft(List[ColTextField]()) { (tfs, col) =>
-        val tf = ColTextField(col)
-        gridPane.add(tf, tfs.size + 1, 3)
-        tf :: tfs
-      }
-      gridPane.add(printButton, 1, 4)
-      printButton.onMouseClicked = _ => for {
-        annex <- fillAnnex(user.text.value, tfs.foldRight(List[parser.Col]())((tf, cols) => tf.col.copy(v = Some(tf.text.value)) :: cols), bs)
-        _ <- print(annex)
-      } yield ()
-      IO()
+      val colPanes = cols.foldLeft(Seq[ColPane]())((panes, col) => panes :+ ColPane(col))
+      printButton.onMouseClicked = _ =>
+        fillAnnex(user.text.value, colPanes.foldRight(List[parser.Col]())((colPane, cols) =>
+          colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs).map(print)
+      IO(nodes :+ new HBox {margin = Insets(12); children = colPanes } :+ printButton)
     case Left(err) =>
-      gridPane.add(label("Eroare: " + err), 1, 3)
       printButton.disable = true
-      IO()
+      IO(nodes :+ label("Eroare: " + err))
   }
 
   def label(s: String): Label = {
@@ -90,10 +89,6 @@ object Main extends JFXApp {
       margin = Insets(6)
       text = s
     }
-  }
-
-  def space: Pane = new Pane {
-    prefHeight = 12
   }
 
   def print(annexToPrint: Array[Byte]): Either[String, Unit] = {
@@ -121,7 +116,14 @@ object Main extends JFXApp {
 
   private case class ColTextField(col: parser.Col) extends TextField {
     text = col.valueAsText
+    minWidth = 50
+    maxWidth = 50
   }
 
+  private case class ColPane(col: parser.Col) extends VBox {
+    val tf = ColTextField(col)
+    margin = Insets(0, 5, 0, 0)
+    children = Seq(label(col.h.name), tf)
+  }
 }
 
