@@ -17,7 +17,7 @@ object parser {
     def apply(skipToValues: Int, hs: H*): T = T(hs, skipToValues)
   }
 
-  case class H(name: String, cond: (String) => Boolean = _ => true, coef: Double = 0.00, kg: Double = 0, repExactly: Int = 1, isLast: Boolean = false, skip: Boolean = false) {
+  case class H(name: String, cond: (String) => Boolean = _.toDouble > 0, coef: Double = 0.00, kg: Double = 0, repExactly: Int = 1, isLast: Boolean = false, skip: Boolean = false) {
     lazy val sName = sourcecode.Name(name)
   }
 

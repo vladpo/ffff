@@ -14,6 +14,7 @@ import com.itextpdf.layout.property.TabAlignment.{LEFT => TAB_LEFT}
 import com.itextpdf.layout.property.TextAlignment.{CENTER => TEXT_CENTER, RIGHT => TEXT_RIGHT}
 import ro.portalapia.parser.{Col, H, T, pAlfalfa, pTables}
 import com.github.nscala_time.time.Imports._
+import ro.portalapia.pdf.animalFedTable
 
 object pdf {
 
@@ -27,7 +28,7 @@ object pdf {
 
   case class M(name: String, days: Int, fedFactor: Int = 1, alfalfaAvg: Float = 0.0f)
 
-  private lazy val months = Seq(
+  private lazy val months: Vector[M] = Vector(
     M("Mai", daysOfMonth(5), fedFactor = 0, alfalfaAvg = 2.0f), M("Iunie", daysOfMonth(6), fedFactor = 0), M("Iulie", daysOfMonth(7), fedFactor = 0, alfalfaAvg = 1.2f),
     M("August", daysOfMonth(8), fedFactor = 0), M("Septembrie", daysOfMonth(9), fedFactor = 0, alfalfaAvg = 0.8f), M("Octombrie", daysOfMonth(10), fedFactor = 0),
     M("Noiembrie", daysOfMonth(11)), M("Decembrie", daysOfMonth(12)), M("Ianuarie", daysOfMonth(1)), M("Februarie", daysOfMonth(2)), M("Martie", daysOfMonth(3)),
@@ -135,27 +136,31 @@ object pdf {
     val os = new ByteArrayOutputStream()
     val pdfDoc = new PdfDocument(new PdfWriter(os))
     val doc = new Document(pdfDoc, A4)
+    val totalAlfalfa = computeMonths.foldLeft(0.0)((t, m) => t + alfalfa * m.alfalfaAvg)
+
     doc.setLeftMargin(48)
-    cs.foldLeft(doc) { (d, c) =>
-      if (c.v.exists(c.h.cond)) {
-        d.add(p(farmer.toString, font = normal))
-        d.add(
+    cs.foldLeft(totalAlfalfa) { (remainingAlfalfa, c) =>
+      if (remainingAlfalfa > 0 && c.v.exists(c.h.cond)) {
+        doc.add(p(farmer.toString, font = normal))
+        doc.add(
           p("Anexa Nr. 5", font = bold).setBold().setTextAlignment(TEXT_RIGHT)
             .add(t("\n(Anexa nr.5", font = oblique))
             .add(t("1", font = oblique).setTextRise(5).setFontSize(5))
             .add(t("  la Ordinul nr. 619/2015)", font = oblique).setItalic())
         )
-        d.add(lineBreak(3, font = normal))
-        d.add(centeredTitle(d, "Calculul efectivului mediu furajat din ferm\u0103 \u015fi produc\u0163ia de lucern\u0103/soia/f\u00e2n*)", font = bold))
-        d.add(p(c.h.name, font = bold).setTextAlignment(TEXT_CENTER).setBold())
-        d.add(lineBreak(1, font = normal))
-        d.add(animalFedTable(c, normal, bold))
-        d.add(legend.foldLeft(p(font = normal))((p, s) => p.add(t(s, fontSize = 8, font = normal))))
+        doc.add(lineBreak(3, font = normal))
+        doc.add(centeredTitle(doc, "Calculul efectivului mediu furajat din ferm\u0103 \u015fi produc\u0163ia de lucern\u0103/soia/f\u00e2n*)", font = bold))
+        doc.add(p(c.h.name, font = bold).setTextAlignment(TEXT_CENTER).setBold())
+        doc.add(lineBreak(1, font = normal))
+        val (ra, table) = animalFedTable(c, normal, bold, remainingAlfalfa)
+        doc.add(table)
+        doc.add(legend.foldLeft(p(font = normal))((p, s) => p.add(t(s, fontSize = 8, font = normal))))
         if (cs.filter(c => c.v.exists(c.h.cond)).last != c) {
-          d.add(new AreaBreak())
+          doc.add(new AreaBreak())
         }
+        ra
       }
-      d
+      remainingAlfalfa
     }
     doc.add(new AreaBreak())
     doc.add(p(farmer.toString, font = normal))
@@ -188,7 +193,7 @@ object pdf {
     (0 until lines).foldLeft(new Div())((div, _) => div.add(p(font = font)))
   }
 
-  private def animalFedTable(c: Col, normal: PdfFont, bold: PdfFont): Table = {
+  private def animalFedTable(c: Col, normal: PdfFont, bold: PdfFont, remainingAlfalfa: Double): (Double, Table) = {
     val table = (1 to 9).foldLeft(new Table(9, false)
       .addCell(hCell("Luna/\nPerioada", w = 53, font = normal))
       .addCell(hCell("Efectiv la \u00eenceputul perioadei (cap.)", font = normal))
@@ -201,28 +206,30 @@ object pdf {
       .addCell(hCell("Consum lucern\u0103/soia/f\u00e2n/mazare\nboabe total pe UVM\n (to)", w = 108.0f, font = normal)))((t, i) => t.addCell(cell(i.toString, font = normal)))
     var t2, t6 = 0
     var t8, t9 = 0.0
-    months.foldLeft(table) { (t, m) =>
+    val ra = computeMonths.foldLeft(remainingAlfalfa) { (ra, m) =>
       t2 += c.v.getOrElse("0").toInt
       t6 += c.v.getOrElse("0").toInt * m.days
       t8 += c.v.getOrElse("0").toInt * c.h.coef
-      t9 += (c.v.getOrElse("0").toInt * m.days * m.fedFactor * c.h.kg) / 1000
-      t.addCell(cell(m.name, w = 53, font = normal))
+      val monthlyConsumption = ra min ((c.v.getOrElse("0").toInt * m.days * m.fedFactor * c.h.kg) / 1000.0)
+      t9 += monthlyConsumption
+      table.addCell(cell(m.name, w = 53, font = normal))
         .addCell(cell(c.valueAsText, font = normal))
         .addCell(cell("-", font = normal)).addCell(cell("-", font = normal))
         .addCell(cell(c.valueAsText, font = normal))
         .addCell(cell((c.v.getOrElse("0").toInt * m.days).toString, font = normal))
         .addCell(cell(c.valueAsText, font = normal))
         .addCell(cell("%1.2f".format(c.v.getOrElse("0").toInt * c.h.coef), font = normal))
-        .addCell(cell("%1.4f".format((c.v.getOrElse("0").toInt * m.days * m.fedFactor * c.h.kg) / 1000.0), font = normal))
+        .addCell(cell("%1.4f".format(monthlyConsumption), font = normal))
+      0.0 max (ra - monthlyConsumption)
     }
-    table.addCell(cell("Total\nperioad\u0103/\nan", h = 51, w = 53, font = bold, bold = true))
+    (ra, table.addCell(cell("Total\nperioad\u0103/\nan", h = 51, w = 53, font = bold, bold = true))
       .addCell(cell(t2.toString, font = normal))
       .addCell(cell("-", font = normal)).addCell(cell("-", font = normal))
       .addCell(cell(t2.toString, font = normal))
       .addCell(cell(t6.toString, font = normal))
       .addCell(cell(t2.toString, font = normal))
       .addCell(cell("%1.2f".format(t8), font = normal))
-      .addCell(cell("%1.4f".format(t9), font = normal))
+      .addCell(cell("%1.4f".format(t9), font = normal)))
   }
 
   private def alfalfaProductionTable(cols: Seq[parser.Col], alfalfa: Double, normal: PdfFont, bold: PdfFont): Table = {
@@ -236,7 +243,7 @@ object pdf {
       .addCell(hCell("Depozitat\u0103\n\u00een vederea\nlivr\u0103rii/\nconsumului\ncu animalele", w = 63f, h = 85, font = normal)))((t, i) => t.addCell(cell(if (i == 5) i + "***)" else i.toString, font = normal)))
       .setMarginLeft(91f)
     var t2, t3, t5 = 0.0
-    months.foldLeft(table) { (t, m) =>
+    computeMonths.foldLeft(table) { (t, m) =>
       t2 += alfalfa * m.alfalfaAvg
       t3 += m.alfalfaAvg
       t5 += cols.foldLeft(0.0)((s, c) => s + c.v.getOrElse("0").toInt * m.days * m.fedFactor * c.h.kg / 1000.0)
@@ -264,6 +271,14 @@ object pdf {
     val cell = new Cell(rSpan, cSpan).setHeight(h).setWidth(w)
     cell.setNextRenderer(new ClipCenterCellContentCellRenderer(cell, p(text, fontSize, font = font), font, bold))
     cell
+  }
+
+  private def computeMonths: Vector[M] = {
+    if (4 < DateTime.now.month.get) {
+      months.dropRight(13 + 4 - DateTime.now.month.get) :+ months(DateTime.now.month.get - 5).copy(days = DateTime.now.day.get)
+    } else {
+      months.dropRight(5 - DateTime.now.month.get) :+ months(11 - 4 + DateTime.now.month.get).copy(days = DateTime.now.day.get)
+    }
   }
 
   import com.itextpdf.kernel.pdf.canvas.PdfCanvas

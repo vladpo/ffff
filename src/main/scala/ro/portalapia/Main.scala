@@ -21,7 +21,7 @@ import scalafx.scene.layout.{HBox, VBox}
 
 object Main extends JFXApp {
 
-  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO](httpProxy("proxy-cluj", 9876))
+  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO]()
   val scalaFxExecutionContext: ExecutionContext = ExecutionContext.fromExecutor((r: Runnable) => Platform.runLater(r))
 
   val user: TextField = loginTf("RO274187369")
@@ -85,7 +85,7 @@ object Main extends JFXApp {
       printButton.onMouseClicked = _ =>
         fillAnnex(user.text.value, colBoxes.foldRight(List[parser.Col]())((colPane, cols) =>
           colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs, storedAlfalfa.text.value.toDouble).map(print).fold(println(_), _ => ())
-      IO(nodes :+ new VBox {margin = Insets(12); children = vBoxes } :+ printButton)
+      IO(nodes :+ new VBox {margin = Insets(12); spacing = 12; children = vBoxes } :+ printButton)
     case Left(err) =>
       printButton.disable = true
       IO(nodes :+ label("Eroare: " + err))
