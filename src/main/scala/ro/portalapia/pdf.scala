@@ -1,6 +1,6 @@
 package ro.portalapia
 
-import java.io.ByteArrayOutputStream
+import java.io.{ByteArrayOutputStream, File, FileOutputStream}
 
 import com.itextpdf.io.source.RandomAccessSourceFactory
 import com.itextpdf.kernel.font.{PdfFont, PdfFontFactory}
@@ -14,7 +14,7 @@ import com.itextpdf.layout.property.TabAlignment.{LEFT => TAB_LEFT}
 import com.itextpdf.layout.property.TextAlignment.{CENTER => TEXT_CENTER, RIGHT => TEXT_RIGHT}
 import ro.portalapia.parser.{Col, H, T, pAlfalfa, pTables}
 import com.github.nscala_time.time.Imports._
-import ro.portalapia.pdf.animalFedTable
+import monocle.macros.GenLens
 
 object pdf {
 
@@ -27,12 +27,25 @@ object pdf {
   }
 
   case class M(name: String, days: Int, fedFactor: Int = 1, alfalfaAvg: Float = 0.0f)
+  case class Consumption(perMonth: Map[String, Double], totalAlfalfa: Double, remainingAlfalfa: Double)
+  object Consumption {
+    def perMonth = GenLens[Consumption](_.perMonth)
+    def alfalfa = GenLens[Consumption](_.remainingAlfalfa)
+  }
 
   private lazy val months: Vector[M] = Vector(
     M("Mai", daysOfMonth(5), fedFactor = 0, alfalfaAvg = 2.0f), M("Iunie", daysOfMonth(6), fedFactor = 0), M("Iulie", daysOfMonth(7), fedFactor = 0, alfalfaAvg = 1.2f),
     M("August", daysOfMonth(8), fedFactor = 0), M("Septembrie", daysOfMonth(9), fedFactor = 0, alfalfaAvg = 0.8f), M("Octombrie", daysOfMonth(10), fedFactor = 0),
     M("Noiembrie", daysOfMonth(11)), M("Decembrie", daysOfMonth(12)), M("Ianuarie", daysOfMonth(1)), M("Februarie", daysOfMonth(2)), M("Martie", daysOfMonth(3)),
     M("Aprilie", daysOfMonth(4), fedFactor = 0))
+
+  private lazy val computeMonths: Vector[M] = {
+    if (4 < DateTime.now.month.get) {
+      months.dropRight(13 + 4 - DateTime.now.month.get) :+ months(DateTime.now.month.get - 5).copy(days = DateTime.now.day.get)
+    } else {
+      months.dropRight(5 - DateTime.now.month.get) :+ months(11 - 4 + DateTime.now.month.get).copy(days = DateTime.now.day.get)
+    }
+  }
 
   private lazy val legend = Seq("*) Calculul efectivului mediu furajat din ferm\u0103 se completeaz\u0103 lunar \u015fi anual pe fiecare specie \u015fi categorie de animale.",
     "\n**) (col. 5) efectiv la sf\u00e2r\u015fitul perioadei reprezint\u0103 \u015fi efectiv la \u00eenceputul lunii/perioadei urm\u0103toare",
@@ -64,11 +77,10 @@ object pdf {
     DateTime.now.month(monthIndex).dayOfMonth.maxValue
   }
 
-
-  def fillAnnex(farmerId: String, zootechnic: scala.List[Col], bs: Array[Byte], storedAlfalfa: Double): Either[String, Array[Byte]] = {
+  def fillAnnex(farmerId: String, zootechnic: scala.List[Col], bs: Array[Byte], storedAlfalfa: Double, isFileSave: Boolean = true): Either[String, Array[Byte]] = {
     val pdfDoc = asPdfDoc(bs)
     (farmer(farmerId, pdfDoc), alfalfa(pdfDoc)) match {
-      case (Right(farmer), Right(alfalfa)) => Right(buildPdf(farmer, zootechnic, alfalfa - storedAlfalfa))
+      case (Right(farmer), Right(alfalfa)) => Right(buildPdf(farmer, zootechnic, Consumption(Map(), alfalfa, computeMonths.foldLeft(0.0)((t, m) => t + alfalfa * m.alfalfaAvg) - storedAlfalfa), isFileSave))
       case (Left(err), _) => Left(err)
       case (_, Left(err)) => Left(err)
     }
@@ -87,7 +99,7 @@ object pdf {
     }.fold(err => Left(err), cs => Right(toFarmer(farmerId, cs)))
   }
 
-  private def toFarmer(farmerId: String, cols: Seq[parser.Col]): Farmer = {
+  private def toFarmer(farmerId: String, cols: Seq[Col]): Farmer = {
     cols.foldLeft(Farmer(farmerId)) { (farmer, c) =>
       c.h.name match {
         case SURNAME => farmer.copy(sn = c.v)
@@ -129,18 +141,17 @@ object pdf {
     }
   }
 
-  private def buildPdf(farmer: Farmer, cs: scala.List[Col], alfalfa: Double): Array[Byte] = {
+  private def buildPdf(farmer: Farmer, cs: scala.List[Col], init: Consumption, isFileSave: Boolean): Array[Byte] = {
     val normal: PdfFont = PdfFontFactory.createFont("./src/main/resources/DejaVuSansCondensed.ttf", "Cp1250", true)
     val bold: PdfFont = PdfFontFactory.createFont("./src/main/resources/DejaVuSansCondensed-Bold.ttf", "Cp1250", true)
     val oblique: PdfFont = PdfFontFactory.createFont("./src/main/resources/DejaVuSansCondensed-Oblique.ttf", "Cp1250", true)
-    val os = new ByteArrayOutputStream()
+    val os = if (isFileSave) new FileOutputStream(new File(farmerFileName(farmer))) else new ByteArrayOutputStream()
     val pdfDoc = new PdfDocument(new PdfWriter(os))
     val doc = new Document(pdfDoc, A4)
-    val totalAlfalfa = computeMonths.foldLeft(0.0)((t, m) => t + alfalfa * m.alfalfaAvg)
 
     doc.setLeftMargin(48)
-    cs.foldLeft(totalAlfalfa) { (remainingAlfalfa, c) =>
-      if (remainingAlfalfa > 0 && c.v.exists(c.h.cond)) {
+    val consumption = cs.foldLeft(init) { (consumption, c) =>
+      if (consumption.remainingAlfalfa >= calcMinConsumption(c) && c.v.exists(c.h.cond)) {
         doc.add(p(farmer.toString, font = normal))
         doc.add(
           p("Anexa Nr. 5", font = bold).setBold().setTextAlignment(TEXT_RIGHT)
@@ -152,26 +163,31 @@ object pdf {
         doc.add(centeredTitle(doc, "Calculul efectivului mediu furajat din ferm\u0103 \u015fi produc\u0163ia de lucern\u0103/soia/f\u00e2n*)", font = bold))
         doc.add(p(c.h.name, font = bold).setTextAlignment(TEXT_CENTER).setBold())
         doc.add(lineBreak(1, font = normal))
-        val (ra, table) = animalFedTable(c, normal, bold, remainingAlfalfa)
+        val (newConsumption, table) = animalFedTable(c, normal, bold, consumption)
         doc.add(table)
         doc.add(legend.foldLeft(p(font = normal))((p, s) => p.add(t(s, fontSize = 8, font = normal))))
         if (cs.filter(c => c.v.exists(c.h.cond)).last != c) {
           doc.add(new AreaBreak())
         }
-        ra
-      }
-      remainingAlfalfa
+        newConsumption
+      } else consumption
     }
     doc.add(new AreaBreak())
     doc.add(p(farmer.toString, font = normal))
     doc.add(centeredTitle(doc, "Produc\u0163ia de lucern\u0103/soia/f\u00e2n \u015fi calculul utiliz\u0103rii acesteia", font = bold))
-    doc.add(alfalfaProductionTable(cs, alfalfa, normal, bold))
+    doc.add(alfalfaProductionTable(cs, consumption, normal, bold))
     doc.add(p("(col.5***) se calculeaz\u0103 prin \u00eensumarea consumului de lucern\u0103/soia total pe UVM prev\u0103zut la col.9 din tabelul anterior", fontSize = 8, normal).setMarginLeft(91))
     doc.close()
-    val out = os.toByteArray
-    os.close()
-    out
+    if(isFileSave)
+      Array[Byte]()
+    else {
+      val out = os.asInstanceOf[ByteArrayOutputStream].toByteArray
+      os.close()
+      out
+    }
   }
+
+  private def farmerFileName(farmer: Farmer): String = farmer.id + farmer.n.fold(farmer.sn.fold("")("_" + _))("_" + _ + farmer.sn.fold("")("_" + _)).replace(" ", "_")
 
   private def p(s: String = "", fontSize: Int = 10, font: PdfFont): Paragraph = {
     new Paragraph(s).setFontSize(fontSize).setFont(font)
@@ -193,7 +209,16 @@ object pdf {
     (0 until lines).foldLeft(new Div())((div, _) => div.add(p(font = font)))
   }
 
-  private def animalFedTable(c: Col, normal: PdfFont, bold: PdfFont, remainingAlfalfa: Double): (Double, Table) = {
+  private def calcMinConsumption(c: Col): Double =
+    computeMonths.foldLeft(Double.MaxValue){ (minConsumption, m) =>
+      val calc = calConsumption(c, m)
+      if(calc > 0)
+        minConsumption min calc
+      else
+        minConsumption
+    }
+
+  private def animalFedTable(c: Col, normal: PdfFont, bold: PdfFont, initConsumption: Consumption): (Consumption, Table) = {
     val table = (1 to 9).foldLeft(new Table(9, false)
       .addCell(hCell("Luna/\nPerioada", w = 53, font = normal))
       .addCell(hCell("Efectiv la \u00eenceputul perioadei (cap.)", font = normal))
@@ -206,11 +231,11 @@ object pdf {
       .addCell(hCell("Consum lucern\u0103/soia/f\u00e2n/mazare\nboabe total pe UVM\n (to)", w = 108.0f, font = normal)))((t, i) => t.addCell(cell(i.toString, font = normal)))
     var t2, t6 = 0
     var t8, t9 = 0.0
-    val ra = computeMonths.foldLeft(remainingAlfalfa) { (ra, m) =>
+    val newConsumption = computeMonths.foldLeft(initConsumption) { (consumption, m) =>
       t2 += c.v.getOrElse("0").toInt
       t6 += c.v.getOrElse("0").toInt * m.days
       t8 += c.v.getOrElse("0").toInt * c.h.coef
-      val monthlyConsumption = ra min ((c.v.getOrElse("0").toInt * m.days * m.fedFactor * c.h.kg) / 1000.0)
+      val monthlyConsumption = consumption.remainingAlfalfa min calConsumption(c, m)
       t9 += monthlyConsumption
       table.addCell(cell(m.name, w = 53, font = normal))
         .addCell(cell(c.valueAsText, font = normal))
@@ -220,9 +245,11 @@ object pdf {
         .addCell(cell(c.valueAsText, font = normal))
         .addCell(cell("%1.2f".format(c.v.getOrElse("0").toInt * c.h.coef), font = normal))
         .addCell(cell("%1.4f".format(monthlyConsumption), font = normal))
-      0.0 max (ra - monthlyConsumption)
+      Consumption.alfalfa.modify(alfalfa => 0.0 max (alfalfa - monthlyConsumption))(
+        Consumption.perMonth.modify((_: Map[String, Double]).updated(m.name, consumption.perMonth.getOrElse(m.name, 0.0) + monthlyConsumption))(consumption)
+      )
     }
-    (ra, table.addCell(cell("Total\nperioad\u0103/\nan", h = 51, w = 53, font = bold, bold = true))
+    (newConsumption, table.addCell(cell("Total\nperioad\u0103/\nan", h = 51, w = 53, font = bold, bold = true))
       .addCell(cell(t2.toString, font = normal))
       .addCell(cell("-", font = normal)).addCell(cell("-", font = normal))
       .addCell(cell(t2.toString, font = normal))
@@ -232,7 +259,9 @@ object pdf {
       .addCell(cell("%1.4f".format(t9), font = normal)))
   }
 
-  private def alfalfaProductionTable(cols: Seq[parser.Col], alfalfa: Double, normal: PdfFont, bold: PdfFont): Table = {
+  private def calConsumption(c: Col, m: M) = (c.v.getOrElse("0").toInt * m.days * m.fedFactor * c.h.kg) / 1000.0
+
+  private def alfalfaProductionTable(cols: Seq[Col], consumption: Consumption, normal: PdfFont, bold: PdfFont): Table = {
     val table = (1 to 6).foldLeft(new Table(6, false).addCell(hCell("Luna/\nPerioada", w = 53, h = 100, rSpan = 2, font = normal))
       .addCell(hCell("Produc\u0163ia lucern\u0103/soia/f\u00e2n\nrealizat\u0103(tone)", h = 50, w = 100, cSpan = 2, font = normal))
       .addCell(hCell("(to) din care:", w = 163.0f, h = 15, cSpan = 3, font = normal))
@@ -244,15 +273,15 @@ object pdf {
       .setMarginLeft(91f)
     var t2, t3, t5 = 0.0
     computeMonths.foldLeft(table) { (t, m) =>
-      t2 += alfalfa * m.alfalfaAvg
+      t2 += consumption.totalAlfalfa * m.alfalfaAvg
       t3 += m.alfalfaAvg
-      t5 += cols.foldLeft(0.0)((s, c) => s + c.v.getOrElse("0").toInt * m.days * m.fedFactor * c.h.kg / 1000.0)
+      t5 += consumption.perMonth.getOrElse(m.name, 0.0)
       t.addCell(cell(m.name, w = 53, font = normal))
-        .addCell(cell("%1.2f".format(alfalfa * m.alfalfaAvg), font = normal))
+        .addCell(cell("%1.2f".format(consumption.totalAlfalfa * m.alfalfaAvg), font = normal))
         .addCell(cell("%1.2f".format(m.alfalfaAvg), font = normal))
         .addCell(cell("0", font = normal))
-        .addCell(cell("%1.2f".format(cols.foldLeft(0.0)((s, c) => s + c.v.getOrElse("0").toInt * m.days * m.fedFactor * c.h.kg / 1000.0)), font = normal))
-        .addCell(cell("%1.2f".format(alfalfa * m.alfalfaAvg), font = normal))
+        .addCell(cell("%1.2f".format(consumption.perMonth.getOrElse(m.name, 0.0)), font = normal))
+        .addCell(cell("%1.2f".format(consumption.totalAlfalfa * m.alfalfaAvg), font = normal))
     }
     table.addCell(cell("Total\nperioad\u0103/\nan", h = 51, w = 53, font = bold, bold = true))
       .addCell(cell("%1.2f".format(t2), font = normal))
@@ -271,14 +300,6 @@ object pdf {
     val cell = new Cell(rSpan, cSpan).setHeight(h).setWidth(w)
     cell.setNextRenderer(new ClipCenterCellContentCellRenderer(cell, p(text, fontSize, font = font), font, bold))
     cell
-  }
-
-  private def computeMonths: Vector[M] = {
-    if (4 < DateTime.now.month.get) {
-      months.dropRight(13 + 4 - DateTime.now.month.get) :+ months(DateTime.now.month.get - 5).copy(days = DateTime.now.day.get)
-    } else {
-      months.dropRight(5 - DateTime.now.month.get) :+ months(11 - 4 + DateTime.now.month.get).copy(days = DateTime.now.day.get)
-    }
   }
 
   import com.itextpdf.kernel.pdf.canvas.PdfCanvas

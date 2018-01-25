@@ -2,6 +2,7 @@ package ro.portalapia
 
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
+import javafx.event.EventHandler
 
 import cats.effect.IO
 import com.softwaremill.sttp.SttpBackend
@@ -17,15 +18,16 @@ import scalafx.application.{JFXApp, Platform}
 import scalafx.geometry.Insets
 import scalafx.scene.{Node, Scene}
 import scalafx.scene.control.{Button, Label, TextField}
+import scalafx.scene.input.MouseEvent
 import scalafx.scene.layout.{HBox, VBox}
 
 object Main extends JFXApp {
 
-  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO]()
+  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO](httpProxy("proxy-cluj", 9876))
   val scalaFxExecutionContext: ExecutionContext = ExecutionContext.fromExecutor((r: Runnable) => Platform.runLater(r))
 
-  val user: TextField = loginTf("RO274187369")
-  val password: TextField = loginTf("1690219264386")
+  val user: TextField = loginTf("RO250232563")
+  val password: TextField = loginTf("1771113264387")
   val storedAlfalfa: TextField = loginTf("0")
   val fetchParcelButton: Button = new Button {
     text = "Afiseaza animale"
@@ -60,6 +62,10 @@ object Main extends JFXApp {
     text = "Printeaza anexele"
     margin = Insets(12)
   }
+  val saveFileButton: Button = new Button {
+    text = "Salveaza ca fisier"
+    margin = Insets(12)
+  }
 
   user.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.isEmpty || password.text.value.isEmpty)
   password.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.isEmpty || user.text.value.isEmpty)
@@ -82,14 +88,19 @@ object Main extends JFXApp {
         colBoxes ++= cbs
         new HBox{ children = cbs}
       }.toList
-      printButton.onMouseClicked = _ =>
-        fillAnnex(user.text.value, colBoxes.foldRight(List[parser.Col]())((colPane, cols) =>
-          colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs, storedAlfalfa.text.value.toDouble).map(print).fold(println(_), _ => ())
-      IO(nodes :+ new VBox {margin = Insets(12); spacing = 12; children = vBoxes } :+ printButton)
+      val finalNodes = nodes :+ new VBox {margin = Insets(12); spacing = 12; children = vBoxes } :+ new HBox { spacing = 6; children = List(printButton, saveFileButton)}
+      saveFileButton.onMouseClicked = _ => mouseClicked(colBoxes, finalNodes, bs, _ => Right())
+      printButton.onMouseClicked = _ => mouseClicked(colBoxes, finalNodes, bs, print, isFileSave = false)
+      IO(finalNodes)
     case Left(err) =>
       printButton.disable = true
       IO(nodes :+ label("Eroare: " + err))
   }
+
+  def mouseClicked(colBoxes: Seq[ColBox], nodes: Seq[Node], bs: Array[Byte], f: Array[Byte] => Either[String, Unit], isFileSave: Boolean = true): Unit =
+    fillAnnex(user.text.value, colBoxes.foldRight(List[parser.Col]())((colPane, cols) =>
+      colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs, storedAlfalfa.text.value.toDouble, isFileSave).map(f).fold(
+      err => container.children = nodes :+ label("Eroare: " + err), _ => ())
 
   def loginTf(value: String): TextField = new TextField {minWidth = 110; maxWidth = 110; text = value}
 
@@ -114,7 +125,6 @@ object Main extends JFXApp {
     import javax.print.PrintServiceLookup
     import javax.print.SimpleDoc
     import javax.print.attribute.HashPrintRequestAttributeSet
-
     val psInFormat = DocFlavor.INPUT_STREAM.AUTOSENSE
     val myDoc = new SimpleDoc(new ByteArrayInputStream(annexToPrint), psInFormat, null)
     val aset = new HashPrintRequestAttributeSet
