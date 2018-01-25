@@ -29,7 +29,7 @@ object parser {
   private lazy val notBracket: all.Parser[Unit] = P(CharsWhile(_ != '['))(sourcecode.Name("notBracket"))
   private lazy val pAlphaNum: Parser[String, Char, String] = P(CharIn('0' to '9', Seq('\u0000', ' '), 'a' to 'z', 'A' to 'Z').rep(1).!.map(_.replace("\u0000", "")))(sourcecode.Name("alpha-num"))
 
-  def pTables(ts: Seq[T], pdfContent: String): Either[String, Seq[Col]] = {
+  def pTables(bytes: Array[Byte], ts: Seq[T], pdfContent: String): Either[String, (Array[Byte], Seq[Col])] = {
     val cols = mutable.ListBuffer[Col]()
     val first: Either[String, Int] = pTable(ts.head, cols).parse(pdfContent).fold(onFailure, onSuccess)
     val r = ts.tail.foldLeft(first) { (sOrF, t) =>
@@ -40,7 +40,7 @@ object parser {
       }
     }
 //    println(logged.mkString("\n"))
-    r.map(_ => cols.toList)
+    r.map(_ => (bytes, cols.toList))
   }
 
   private def pTable(t: T, cols: mutable.ListBuffer[Col]): Parser[Any, Char, String] = {

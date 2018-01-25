@@ -17,6 +17,7 @@ import scalafx.geometry.Insets
 import scalafx.scene.{Node, Scene}
 import scalafx.scene.control.{Button, Label, TextField}
 import scalafx.scene.layout.{HBox, VBox}
+import scalafx.stage.FileChooser
 
 object Main extends JFXApp {
 
@@ -64,21 +65,22 @@ object Main extends JFXApp {
     margin = Insets(12)
   }
 
-  user.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.isEmpty || password.text.value.isEmpty)
-  password.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.isEmpty || user.text.value.isEmpty)
+  user.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.trim.isEmpty || password.text.value.trim.isEmpty)
+  password.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.trim.isEmpty || user.text.value.trim.isEmpty)
 
   fetchParcelButton.onMouseClicked = _ => (for {
-    either <- fetchParcelContent(User(user.text.value), Password(password.text.value), 2017).map(_.map(bs => (bs, zootechnic(bs))))
+    either <- fetchParcelContent(User(user.text.value.trim), Password(password.text.value.trim), 2017)
+    cols <- zootechnic(either)
     _ <- IO.shift(scalaFxExecutionContext)
-    nodes <- addZootechnicNodes(either)
+    nodes <- addZootechnicNodes(cols)
     _ <- IO(container.children = nodes)
   } yield ()).unsafeRunAsync {
     case Right(()) =>
-    case Left(err) => println(err)
+    case Left(err) => container.children = nodes :+ label("Eroare: " + err)
   }
 
-  private def addZootechnicNodes(either: Either[String, (Array[Byte], Either[String, Seq[parser.Col]])]): IO[Seq[Node]] = either match {
-    case Right((bs, Right(cols))) =>
+  private def addZootechnicNodes(either: Either[String, (Array[Byte], Seq[parser.Col])]): IO[Seq[Node]] = either match {
+    case Right((bs, cols)) =>
       val colBoxes = ArrayBuffer[ColBox]()
       val vBoxes = cols.grouped(4).map{ gr =>
         val cbs = gr.map(ColBox)
@@ -86,17 +88,17 @@ object Main extends JFXApp {
         new HBox{ children = cbs}
       }.toList
       val finalNodes = nodes :+ new VBox {margin = Insets(12); spacing = 12; children = vBoxes } :+ new HBox { spacing = 6; children = List(printButton, saveFileButton)}
-      saveFileButton.onMouseClicked = _ => mouseClicked(colBoxes, finalNodes, bs, _ => Right())
-      printButton.onMouseClicked = _ => mouseClicked(colBoxes, finalNodes, bs, print, isFileSave = false)
+      saveFileButton.onMouseClicked = _ =>
+        mouseClicked(colBoxes, finalNodes, bs, _ => Right() , Some(new FileChooser{initialFileName = user.text.value.trim  + ".pdf"}.showSaveDialog(stage).getAbsolutePath))
+      printButton.onMouseClicked = _ => mouseClicked(colBoxes, finalNodes, bs, print)
       IO(finalNodes)
     case Left(err) =>
-      printButton.disable = true
       IO(nodes :+ label("Eroare: " + err))
   }
 
-  def mouseClicked(colBoxes: Seq[ColBox], nodes: Seq[Node], bs: Array[Byte], f: Array[Byte] => Either[String, Unit], isFileSave: Boolean = true): Unit =
-    fillAnnex(user.text.value, colBoxes.foldRight(List[parser.Col]())((colPane, cols) =>
-      colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs, storedAlfalfa.text.value.toDouble, isFileSave).map(f).fold(
+  def mouseClicked(colBoxes: Seq[ColBox], nodes: Seq[Node], bs: Array[Byte], f: Array[Byte] => Either[String, Unit], filePath: Option[String] = None): Unit =
+    fillAnnex(user.text.value.trim, colBoxes.foldRight(List[parser.Col]())((colPane, cols) =>
+      colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs, storedAlfalfa.text.value.trim.replace(",", ".").toDouble, filePath).map(f).fold(
       err => container.children = nodes :+ label("Eroare: " + err), _ => ())
 
   def loginTf(value: String = ""): TextField = new TextField {minWidth = 110; maxWidth = 110; text = value}

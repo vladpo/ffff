@@ -2,6 +2,7 @@ package ro.portalapia
 
 import java.io.{ByteArrayOutputStream, File, FileOutputStream}
 
+import cats.effect.IO
 import com.itextpdf.io.source.RandomAccessSourceFactory
 import com.itextpdf.kernel.font.{PdfFont, PdfFontFactory}
 import com.itextpdf.kernel.geom.PageSize.A4
@@ -14,6 +15,7 @@ import com.itextpdf.layout.property.TabAlignment.{LEFT => TAB_LEFT}
 import com.itextpdf.layout.property.TextAlignment.{CENTER => TEXT_CENTER, RIGHT => TEXT_RIGHT}
 import ro.portalapia.parser.{Col, H, T, pAlfalfa, pTables}
 import com.github.nscala_time.time.Imports._
+import monocle.Lens
 import monocle.macros.GenLens
 
 object pdf {
@@ -27,10 +29,13 @@ object pdf {
   }
 
   case class M(name: String, days: Int, fedFactor: Int = 1, alfalfaAvg: Float = 0.0f)
+
   case class Consumption(perMonth: Map[String, Double], totalAlfalfa: Double, remainingAlfalfa: Double)
+
   object Consumption {
-    def perMonth = GenLens[Consumption](_.perMonth)
-    def alfalfa = GenLens[Consumption](_.remainingAlfalfa)
+    def perMonth: Lens[Consumption, Map[String, Double]] = GenLens[Consumption](_.perMonth)
+
+    def alfalfa: Lens[Consumption, Double] = GenLens[Consumption](_.remainingAlfalfa)
   }
 
   private lazy val months: Vector[M] = Vector(
@@ -77,10 +82,10 @@ object pdf {
     DateTime.now.month(monthIndex).dayOfMonth.maxValue
   }
 
-  def fillAnnex(farmerId: String, zootechnic: scala.List[Col], bs: Array[Byte], storedAlfalfa: Double, isFileSave: Boolean = true): Either[String, Array[Byte]] = {
+  def fillAnnex(farmerId: String, zootechnic: scala.List[Col], bs: Array[Byte], storedAlfalfa: Double, filePath: Option[String]): Either[String, Array[Byte]] = {
     val pdfDoc = asPdfDoc(bs)
-    (farmer(farmerId, pdfDoc), alfalfa(pdfDoc)) match {
-      case (Right(farmer), Right(alfalfa)) => Right(buildPdf(farmer, zootechnic, Consumption(Map(), alfalfa, computeMonths.foldLeft(0.0)((t, m) => t + alfalfa * m.alfalfaAvg) - storedAlfalfa), isFileSave))
+    (farmer(bs, farmerId, pdfDoc), alfalfa(pdfDoc)) match {
+      case (Right(farmer), Right(alfalfa)) => buildPdf(filePath, farmer, zootechnic, Consumption(Map(), alfalfa, computeMonths.foldLeft(0.0)((t, m) => t + alfalfa * m.alfalfaAvg) - storedAlfalfa))
       case (Left(err), _) => Left(err)
       case (_, Left(err)) => Left(err)
     }
@@ -88,15 +93,15 @@ object pdf {
 
   private def asPdfDoc(bs: Array[Byte]): PdfDocument = new PdfDocument(new PdfReader(new RandomAccessSourceFactory().createSource(bs), new ReaderProperties()))
 
-  private def farmer(farmerId: String, pdfDoc: PdfDocument): Either[String, Farmer] = {
+  private def farmer(bytes: Array[Byte], farmerId: String, pdfDoc: PdfDocument): Either[String, Farmer] = {
     getPdfContent(pdfDoc, 1).flatMap { content =>
-      pTables(Seq(
+      pTables(bytes, Seq(
         T(0, H(SURNAME, repExactly = 4), H(NAME, repExactly = 4, isLast = true)),
         T(0, H(COUNTY, repExactly = 4), H(LOCALITY, repExactly = 7, skip = true), H(TOWN, repExactly = 4),
           H(VILLAGE, repExactly = 4, isLast = true)),
         T(0, H(STREET, repExactly = 4), H(STREET_NB, repExactly = 4), H(ZIP_CODE, repExactly = 4), H(BUILDING, repExactly = 4),
           H(STAIRCASE, repExactly = 4), H(APARTMENT, repExactly = 4, isLast = true))), content)
-    }.fold(err => Left(err), cs => Right(toFarmer(farmerId, cs)))
+    }.fold(err => Left(err), cs => Right(toFarmer(farmerId, cs._2)))
   }
 
   private def toFarmer(farmerId: String, cols: Seq[Col]): Farmer = {
@@ -114,16 +119,22 @@ object pdf {
     }
   }
 
-  def zootechnic(bs: Array[Byte]): Either[String, Seq[Col]] = {
-    getPdfContent(asPdfDoc(bs), 2).flatMap(content =>
-      pTables(Seq(
-        T(2,
-          H("Bovine > 2 ani", coef = 1.00, kg = 4), H("Bovine 6 luni - 2 ani", coef = 0.6, kg = 3.6), H("Bovine < 6 luni", cond = _.toInt > 5, coef = 0.4, kg = 2.4),
-          H("Ecvidee > 6 luni", coef = 1.00, kg = 4), H("Ecvidee < 6 luni", ignore), H("Ovine", cond = _.toInt > 30, coef = 0.15, kg = 0.898, isLast = true)),
-        T(3, H("Caprine", cond = _.toInt > 25, coef = 0.15, kg = 0.898), H("Scroafe rep. > 50kg", ignore), H("Alte porcine", ignore), H("Gaini ou", ignore), H("Alte pasari curte", ignore, isLast = true))
-      ),
-        content
-      ))
+  def zootechnic(errorOrBytes: Either[String, Array[Byte]]): IO[Either[String, (Array[Byte], Seq[Col])]] = errorOrBytes match {
+    case Right(bytes) =>
+      IO(asPdfDoc(bytes)).attempt.map {
+        case Right(pdfDocument) =>
+          getPdfContent(pdfDocument, 2).flatMap(content =>
+            pTables(bytes, Seq(
+              T(2,
+                H("Bovine > 2 ani", coef = 1.00, kg = 4), H("Bovine 6 luni - 2 ani", coef = 0.6, kg = 3.6), H("Bovine < 6 luni", cond = _.toInt > 5, coef = 0.4, kg = 2.4),
+                H("Ecvidee > 6 luni", coef = 1.00, kg = 4), H("Ecvidee < 6 luni", ignore), H("Ovine", cond = _.toInt > 30, coef = 0.15, kg = 0.898, isLast = true)),
+              T(3, H("Caprine", cond = _.toInt > 25, coef = 0.15, kg = 0.898), H("Scroafe rep. > 50kg", ignore), H("Alte porcine", ignore), H("Gaini ou", ignore), H("Alte pasari curte", ignore, isLast = true))
+            ),
+              content
+            ))
+        case Left(err) => Left(err.getLocalizedMessage)
+      }
+    case Left(err) => IO(Left(err))
   }
 
   private def alfalfa(pdfDoc: PdfDocument): Either[String, Double] = {
@@ -141,11 +152,11 @@ object pdf {
     }
   }
 
-  private def buildPdf(farmer: Farmer, cs: scala.List[Col], init: Consumption, isFileSave: Boolean): Array[Byte] = {
-    val normal: PdfFont = PdfFontFactory.createFont("./src/main/resources/DejaVuSansCondensed.ttf", "Cp1250", true)
-    val bold: PdfFont = PdfFontFactory.createFont("./src/main/resources/DejaVuSansCondensed-Bold.ttf", "Cp1250", true)
-    val oblique: PdfFont = PdfFontFactory.createFont("./src/main/resources/DejaVuSansCondensed-Oblique.ttf", "Cp1250", true)
-    val os = if (isFileSave) new FileOutputStream(new File(farmerFileName(farmer))) else new ByteArrayOutputStream()
+  private def buildPdf(filePath: Option[String], farmer: Farmer, cs: scala.List[Col], init: Consumption): Either[String, Array[Byte]] = {
+    val normal: PdfFont = PdfFontFactory.createFont("DejaVuSansCondensed.ttf", "Cp1250", true)
+    val bold: PdfFont = PdfFontFactory.createFont("DejaVuSansCondensed-Bold.ttf", "Cp1250", true)
+    val oblique: PdfFont = PdfFontFactory.createFont("DejaVuSansCondensed-Oblique.ttf", "Cp1250", true)
+    val os = if (filePath.isDefined) new FileOutputStream(new File(filePath.get)) else new ByteArrayOutputStream()
     val pdfDoc = new PdfDocument(new PdfWriter(os))
     val doc = new Document(pdfDoc, A4)
 
@@ -177,17 +188,19 @@ object pdf {
     doc.add(centeredTitle(doc, "Produc\u0163ia de lucern\u0103/soia/f\u00e2n \u015fi calculul utiliz\u0103rii acesteia", font = bold))
     doc.add(alfalfaProductionTable(cs, consumption, normal, bold))
     doc.add(p("(col.5***) se calculeaz\u0103 prin \u00eensumarea consumului de lucern\u0103/soia total pe UVM prev\u0103zut la col.9 din tabelul anterior", fontSize = 8, normal).setMarginLeft(91))
-    doc.close()
-    if(isFileSave)
-      Array[Byte]()
-    else {
-      val out = os.asInstanceOf[ByteArrayOutputStream].toByteArray
-      os.close()
-      out
+    try {
+      doc.close()
+      if (filePath.isDefined)
+        Right(Array[Byte]())
+      else {
+        val out = os.asInstanceOf[ByteArrayOutputStream].toByteArray
+        os.close()
+        Right(out)
+      }
+    }catch {
+      case e: Exception => Left(e.getMessage)
     }
   }
-
-  private def farmerFileName(farmer: Farmer): String = farmer.id + farmer.n.fold(farmer.sn.fold("")("_" + _))("_" + _ + farmer.sn.fold("")("_" + _)).replace(" ", "_")
 
   private def p(s: String = "", fontSize: Int = 10, font: PdfFont): Paragraph = {
     new Paragraph(s).setFontSize(fontSize).setFont(font)
@@ -210,9 +223,9 @@ object pdf {
   }
 
   private def calcMinConsumption(c: Col): Double =
-    computeMonths.foldLeft(Double.MaxValue){ (minConsumption, m) =>
+    computeMonths.foldLeft(Double.MaxValue) { (minConsumption, m) =>
       val calc = calConsumption(c, m)
-      if(calc > 0)
+      if (calc > 0)
         minConsumption min calc
       else
         minConsumption

@@ -16,11 +16,10 @@ object http {
     req
       .post(uri"""$url""")
       .body("name" -> user.id, "password" -> password.p)
-      .response(ignore)
       .send[IO]().flatMap { r =>
       r.body match {
-        case Right(()) => fetchParcelPdf(r, user, year)
-        case Left(err) => IO.pure(Left(s"""Autentificarea taranului $user cu CNP-ul $password nu a functionat.${"\n" + err}"""))
+        case Right(body) => if(r.is200 && !body.contains("Utilizator sau parol")) fetchParcelPdf(r, user, year) else IO(Left("Eroare la logare, verifica utilizatorul si parola."))
+        case Left(err) => IO(Left(s"""Autentificarea taranului $user cu CNP-ul $password nu a functionat.${"\n" + err}"""))
       }
     }
   }
