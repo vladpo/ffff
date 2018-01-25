@@ -2,11 +2,9 @@ package ro.portalapia
 
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
-import javafx.event.EventHandler
 
 import cats.effect.IO
 import com.softwaremill.sttp.SttpBackend
-import com.softwaremill.sttp.SttpBackendOptions._
 import com.softwaremill.sttp.asynchttpclient.fs2.AsyncHttpClientFs2Backend
 import fs2.Stream
 import ro.portalapia.http._
@@ -18,16 +16,15 @@ import scalafx.application.{JFXApp, Platform}
 import scalafx.geometry.Insets
 import scalafx.scene.{Node, Scene}
 import scalafx.scene.control.{Button, Label, TextField}
-import scalafx.scene.input.MouseEvent
 import scalafx.scene.layout.{HBox, VBox}
 
 object Main extends JFXApp {
 
-  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO](httpProxy("proxy-cluj", 9876))
+  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO]()
   val scalaFxExecutionContext: ExecutionContext = ExecutionContext.fromExecutor((r: Runnable) => Platform.runLater(r))
 
-  val user: TextField = loginTf("RO250232563")
-  val password: TextField = loginTf("1771113264387")
+  val user: TextField = loginTf()
+  val password: TextField = loginTf()
   val storedAlfalfa: TextField = loginTf("0")
   val fetchParcelButton: Button = new Button {
     text = "Afiseaza animale"
@@ -102,7 +99,7 @@ object Main extends JFXApp {
       colPane.col.copy(v = Some(colPane.tf.text.value)) :: cols), bs, storedAlfalfa.text.value.toDouble, isFileSave).map(f).fold(
       err => container.children = nodes :+ label("Eroare: " + err), _ => ())
 
-  def loginTf(value: String): TextField = new TextField {minWidth = 110; maxWidth = 110; text = value}
+  def loginTf(value: String = ""): TextField = new TextField {minWidth = 110; maxWidth = 110; text = value}
 
   def label(s: String): Label = {
     new Label {

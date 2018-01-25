@@ -2,7 +2,8 @@ name := "apia-portal"
 
 version := "0.1"
 
-scalaVersion := "2.12.4"
+val scala = "2.12.4"
+scalaVersion := scala
 
 val monocleVersion = "1.5.0"
 
@@ -16,3 +17,22 @@ libraryDependencies ++= Seq(
   "com.github.julien-truffaut" %%  "monocle-core"  % monocleVersion,
   "com.github.julien-truffaut" %%  "monocle-macro" % monocleVersion
 )
+
+assemblyMergeStrategy in assembly := {
+  case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+  case _ => MergeStrategy.first
+}
+
+lazy val commonSettings = Seq(
+  version := "0.1-SNAPSHOT",
+  organization := "ro.portalapia",
+  scalaVersion := scala,
+  test in assembly := {}
+)
+
+lazy val app = (project in file(".")).
+  settings(commonSettings: _*).
+  settings(
+    mainClass in assembly := Some("ro.portalapia.Main"),
+    assemblyJarName := "portalapia.jar"
+  )
