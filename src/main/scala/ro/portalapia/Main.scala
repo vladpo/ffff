@@ -89,7 +89,7 @@ object Main extends JFXApp {
       }.toList
       val finalNodes = nodes :+ new VBox {margin = Insets(12); spacing = 12; children = vBoxes } :+ new HBox { spacing = 6; children = List(printButton, saveFileButton)}
       saveFileButton.onMouseClicked = _ =>
-        mouseClicked(colBoxes, finalNodes, bs, _ => Right() , Some(new FileChooser{initialFileName = user.text.value.trim  + ".pdf"}.showSaveDialog(stage).getAbsolutePath))
+        mouseClicked(colBoxes, finalNodes, bs, _ => Right() , Some(new FileChooser{initialFileName = user.text.value.trim}.showSaveDialog(stage).getAbsolutePath))
       printButton.onMouseClicked = _ => mouseClicked(colBoxes, finalNodes, bs, print)
       IO(finalNodes)
     case Left(err) =>
