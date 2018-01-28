@@ -137,8 +137,8 @@ object pdf {
           getPdfContent(pdfDocument, 2).flatMap(content =>
             pTables(bytes, Seq(
               T(2,
-                H("Bovine > 2 ani", coef = 1.00, kg = 4), H("Bovine 6 luni - 2 ani", coef = 0.6, kg = 3.6), H("Bovine < 6 luni", cond = _.toInt > 5, coef = 0.4, kg = 2.4),
-                H("Ecvidee > 6 luni", coef = 1.00, kg = 4), H("Ecvidee < 6 luni", ignore), H("Ovine", cond = _.toInt > 30, coef = 0.15, kg = 0.898, isLast = true)),
+                H("Bovine > 2 ani", coef = 1.00, kg = 6), H("Bovine 6 luni - 2 ani", coef = 0.6, kg = 3.6), H("Bovine < 6 luni", cond = _.toInt > 5, coef = 0.4, kg = 2.4),
+                H("Ecvidee > 6 luni", coef = 1.00, kg = 6), H("Ecvidee < 6 luni", ignore), H("Ovine", cond = _.toInt > 30, coef = 0.15, kg = 0.898, isLast = true)),
               T(3, H("Caprine", cond = _.toInt > 25, coef = 0.15, kg = 0.898), H("Scroafe rep. > 50kg", ignore), H("Alte porcine", ignore), H("Gaini ou", ignore), H("Alte pasari curte", ignore, isLast = true))
             ),
               content
@@ -227,20 +227,24 @@ object pdf {
   }
 
   private def calcKgAvg(cs: Seq[Col], initConsumption: Consumption): Option[Double] = {
-    cs.foldLeft((initConsumption, 0.0)) { (t, c) =>
-      if (t._1.remainingAlfalfa >= calcMinConsumption(c) && c.v.exists(c.h.cond)) {
-        computeMonths.foldLeft(t) { (tt, m) =>
-          val totalConsumptionDays = tt._2 + c.v.getOrElse("0").toInt * m.days * m.fedFactor
-          val monthly = tt._1.remainingAlfalfa min calConsumption(c, m)
-          (Consumption.alfalfa.modify(rAlfalfa => 0.0 max (rAlfalfa - monthly))(
-            Consumption.perMonth.modify((_: Map[String, Double]).updated(m.name, tt._1.perMonth.getOrElse(m.name, 0.0) + monthly))(tt._1)), totalConsumptionDays)
-        }
-      } else t
-    } match {
-      case (c, days) if c.totalAlfalfa - c.remainingAlfalfa > c.storedAlfalfa =>
-        Some((c.totalAlfalfa - c.storedAlfalfa) * 1000.0 / days)
-      case _ => None
-    }
+    None
+//    cs.foldLeft((initConsumption, 0.0)) { (t, c) =>
+//      if (t._1.remainingAlfalfa >= calcMinConsumption(c) && c.v.exists(c.h.cond)) {
+//        computeMonths.foldLeft(t) { (tt, m) =>
+//          val totalPerMonth = tt._2 + consumptionPerMonth(c, m)
+//          println("tt._1.remainingAlfalfa = " + tt._1.remainingAlfalfa)
+//          val monthly = tt._1.remainingAlfalfa min calConsumption(c, m)
+//          (Consumption.alfalfa.modify(rAlfalfa => 0.0 max (rAlfalfa - monthly))(
+//            Consumption.perMonth.modify((_: Map[String, Double]).updated(m.name, tt._1.perMonth.getOrElse(m.name, 0.0) + monthly))(tt._1)), totalPerMonth)
+//        }
+//      } else t
+//    } match {
+//      case (c, days) if c.remainingAlfalfa > c.storedAlfalfa =>
+//        println("c.totalAlfalfa - c.storedAlfalfa  = " + (c.totalAlfalfa - c.storedAlfalfa))
+//        println("days = " + days)
+//        Some((c.totalAlfalfa - c.storedAlfalfa) * 1000.0 / days)
+//      case _ => None
+//    }
   }
 
   private def p(s: String = "", fontSize: Int = 10, font: PdfFont): Paragraph = {
@@ -318,7 +322,11 @@ object pdf {
       .addCell(cell("%1.4f".format(t9), font = normal)))
   }
 
-  private def calConsumption(c: Col, m: M, kgAvg: Option[Double] = None) = (c.v.getOrElse("0").toInt * m.days * m.fedFactor * kgAvg.getOrElse(c.h.kg)) / 1000.0
+  private def calConsumption(c: Col, m: M, kgAvg: Option[Double] = None) = {
+    (consumptionPerMonth(c, m) * kgAvg.getOrElse(c.h.kg)) / 1000.0
+  }
+
+  private def consumptionPerMonth(c: parser.Col, m: pdf.M): Double = c.v.getOrElse("0").toInt * c.h.coef * m.days * m.fedFactor
 
   private def alfalfaProductionTable(cols: Seq[Col], initConsumption: Consumption, normal: PdfFont, bold: PdfFont): Table = {
     val table = (1 to 6).foldLeft(new Table(6, false).addCell(hCell("Luna/\nPerioada", w = 53, h = 100, rSpan = 2, font = normal))
