@@ -20,21 +20,25 @@ import monocle.macros.GenLens
 
 object pdf {
 
-  case class Farmer(id: String, sn: Option[String] = None, n: Option[String] = None, county: Option[String] = None, town: Option[String] = None, village: Option[String] = None, street: Option[String] = None, streetNb: Option[String] = None) {
+  case class Farmer(id: String, sn: Option[String] = None, n: Option[String] = None, company: Option[String] = None, county: Option[String] = None, town: Option[String] = None, village: Option[String] = None, street: Option[String] = None, streetNb: Option[String] = None) {
     override def toString: String = {
       def spaced(ms: Option[String]): String = ms.map(_ + " ").getOrElse("")
-      spaced(sn) + spaced(n) + id + "\n" + spaced(county) + spaced(town) + spaced(village) + spaced(street) + spaced(streetNb)
+      fullName() + " " + id + "\n" + spaced(county) + spaced(town) + spaced(village) + spaced(street) + spaced(streetNb)
     }
     def fullName(capitalize: Boolean = false, sep: String = " "): String = {
       def capSplit(s: String): String = s.split(" ").map(_.toLowerCase.capitalize).mkString(" ")
-      if(capitalize)
+      val fullName = if(capitalize)
         sn.fold(n.fold("")(sep + capSplit(_)))(sep + capSplit(_) + n.fold("")(sep + capSplit(_))).replace(" ", sep)
       else
         sn.fold(n.fold("")(sep + _))(sep + _ + n.fold("")(sep + _)).replace(" ", sep)
+      if (fullName.isEmpty)
+        sep + company.getOrElse("").replace(" ", sep)
+      else
+        fullName
     }
   }
 
-  case class M(name: String, days: Int, fedFactor: Int = 1, alfalfaAvgPerHectar: Float = 0.0f)
+  case class M(name: String, days: Int, fedFactor: Int = 1, alfalfaAvgPerHectar: Float = 0.0f, year: Int = DateTime.now.year.get)
 
   case class Consumption(perMonth: Map[String, Double], hectares: Double, totalAlfalfa: Double, remainingAlfalfa: Double, storedAlfalfa: Double)
 
@@ -48,10 +52,12 @@ object pdf {
   private val signLabel = "Semn\u0103tura"
 
   private lazy val months: Vector[M] = Vector(
-    M("Mai", daysOfMonth(5), fedFactor = 0, alfalfaAvgPerHectar = 2.0f), M("Iunie", daysOfMonth(6), fedFactor = 0), M("Iulie", daysOfMonth(7), fedFactor = 0, alfalfaAvgPerHectar = 1.2f),
-    M("August", daysOfMonth(8), fedFactor = 0), M("Septembrie", daysOfMonth(9), fedFactor = 0, alfalfaAvgPerHectar = 0.8f), M("Octombrie", daysOfMonth(10), fedFactor = 0),
-    M("Noiembrie", daysOfMonth(11)), M("Decembrie", daysOfMonth(12)), M("Ianuarie", daysOfMonth(1)), M("Februarie", daysOfMonth(2)), M("Martie", daysOfMonth(3)),
-    M("Aprilie", daysOfMonth(4), fedFactor = 0))
+    M("Mai", daysOfMonth(5), fedFactor = 0, alfalfaAvgPerHectar = 2.0f, year = prevYear), M("Iun.", daysOfMonth(6), fedFactor = 0, year = prevYear), M("Iul.", daysOfMonth(7), fedFactor = 0, alfalfaAvgPerHectar = 1.2f, year = prevYear),
+    M("Aug.", daysOfMonth(8), fedFactor = 0, year = prevYear), M("Sep.", daysOfMonth(9), fedFactor = 0, alfalfaAvgPerHectar = 0.8f, year = prevYear), M("Oct.", daysOfMonth(10), fedFactor = 0, year = prevYear),
+    M("Nov.", daysOfMonth(11), year = prevYear), M("Dec.", daysOfMonth(12), year = prevYear), M("Ian.", daysOfMonth(1)), M("Feb.", daysOfMonth(2)), M("Mar.", daysOfMonth(3)),
+    M("Apr.", daysOfMonth(4), fedFactor = 0))
+
+  private lazy val prevYear = DateTime.now.year.get - 1
 
   private lazy val computeMonths: Vector[M] = {
     if (4 < DateTime.now.month.get) {
@@ -73,19 +79,20 @@ object pdf {
     "\n(col. 9) consum lucern\u0103/soia/f\u00e2n an/total perioad\u0103 = (col. 8) X cantitatea de lucern\u0103/soia consumat\u0103 pe UVM stabilit\u0103 prin ra\u0163ie de",
     "\nc\u0103tre fermier X 365 zile (sau nr. zile perioad\u0103). Cantitatea calculat\u0103 nu poate dep\u0103\u015fi cantitatea maxim\u0103/UVM/an prev\u0103zut\u0103 \u00een anexa nr. 5 la Ordinul nr. 619/2015.")
 
-  private lazy val ignore: (String) => Boolean = _ => false
-  private lazy val SURNAME = "01. Nume"
-  private lazy val NAME = "02. Prenume"
-  private lazy val COUNTY = "15. Jude"
-  private lazy val LOCALITY = "16. Localitate"
-  private lazy val TOWN = "16.1 Ora"
-  private lazy val VILLAGE = "16.2 Sat"
-  private lazy val STREET = "17. Strada"
-  private lazy val STREET_NB = "18. Nr."
-  private lazy val ZIP_CODE = "19. Cod po"
-  private lazy val BUILDING = "20. Bl"
-  private lazy val STAIRCASE = "21. Sc."
-  private lazy val APARTMENT = "22. Ap."
+  private val ignore: (String) => Boolean = _ => false
+  private val SURNAME = "01. Nume"
+  private val NAME = "02. Prenume"
+  private val COMPANY = "07. Denumire exploata"
+  private val COUNTY = "15. Jude"
+  private val LOCALITY = "16. Localitate"
+  private val TOWN = "16.1 Ora"
+  private val VILLAGE = "16.2 Sat"
+  private val STREET = "17. Strada"
+  private val STREET_NB = "18. Nr."
+  private val ZIP_CODE = "19. Cod po"
+  private val BUILDING = "20. Bl"
+  private val STAIRCASE = "21. Sc."
+  private val APARTMENT = "22. Ap."
 
   private def daysOfMonth(monthIndex: Int): Int = {
     DateTime.now.month(monthIndex).dayOfMonth.maxValue
@@ -108,6 +115,7 @@ object pdf {
     getPdfContent(pdfDoc, 1).flatMap { content =>
       pTables(bytes, Seq(
         T(0, H(SURNAME, repExactly = 4), H(NAME, repExactly = 4, isLast = true)),
+        T(0, H(COMPANY, isLast = true)),
         T(0, H(COUNTY, repExactly = 4), H(LOCALITY, repExactly = 7, skip = true), H(TOWN, repExactly = 4),
           H(VILLAGE, repExactly = 4, isLast = true)),
         T(0, H(STREET, repExactly = 4), H(STREET_NB, repExactly = 4), H(ZIP_CODE, repExactly = 4), H(BUILDING, repExactly = 4),
@@ -120,6 +128,7 @@ object pdf {
       c.h.name match {
         case SURNAME => farmer.copy(sn = c.v)
         case NAME => farmer.copy(n = c.v)
+        case COMPANY => farmer.copy(company = c.v)
         case COUNTY => farmer.copy(county = c.v)
         case VILLAGE => farmer.copy(village = c.v)
         case TOWN => farmer.copy(town = c.v)
@@ -300,7 +309,7 @@ object pdf {
       t8 = c.v.getOrElse("0").toInt * c.h.coef
       val monthlyConsumption = consumption.remainingAlfalfa min calConsumption(c, m, kgAvg)
       t9 += monthlyConsumption
-      table.addCell(cell(m.name, w = 53, font = normal))
+      table.addCell(cell(m.name + " " + m.year.toString, w = 53, font = normal))
         .addCell(cell(c.valueAsText, font = normal))
         .addCell(cell("-", font = normal)).addCell(cell("-", font = normal))
         .addCell(cell(c.valueAsText, font = normal))
@@ -343,7 +352,7 @@ object pdf {
       t2 += initConsumption.hectares * m.alfalfaAvgPerHectar
       t3 += m.alfalfaAvgPerHectar
       t5 += initConsumption.perMonth.getOrElse(m.name, 0.0)
-      t.addCell(cell(m.name, w = 53, font = normal))
+      t.addCell(cell(m.name + " " + m.year.toString, w = 53, font = normal))
         .addCell(cell("%1.2f".format(initConsumption.hectares * m.alfalfaAvgPerHectar), font = normal))
         .addCell(cell("%1.2f".format(m.alfalfaAvgPerHectar), font = normal))
         .addCell(cell("0", font = normal))
