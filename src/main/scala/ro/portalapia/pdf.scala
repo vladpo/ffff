@@ -1,6 +1,7 @@
 package ro.portalapia
 
 import java.io.{ByteArrayOutputStream, File, FileOutputStream}
+import java.util.Date
 
 import cats.effect.IO
 import com.itextpdf.io.source.RandomAccessSourceFactory
@@ -38,7 +39,10 @@ object pdf {
     }
   }
 
-  case class M(name: String, days: Int, fedFactor: Int = 1, alfalfaAvgPerHectar: Float = 0.0f, year: Int = DateTime.now.year.get)
+  case class M(name: String, days: Int, fedFactor: Int = 1, alfalfaAvgPerHectar: Float = 0.0f, year: Int = DateTime.now.year.get) {
+    def isApril(): Boolean = name == "Apr."
+
+  }
 
   case class Consumption(perMonth: Map[String, Double], hectares: Double, totalAlfalfa: Double, remainingAlfalfa: Double, storedAlfalfa: Double)
 
@@ -95,7 +99,7 @@ object pdf {
   private val APARTMENT = "22. Ap."
 
   private def daysOfMonth(monthIndex: Int): Int = {
-    DateTime.now.month(monthIndex).dayOfMonth.maxValue
+      DateTime.now.month(monthIndex).dayOfMonth.maxValue
   }
 
   def fillAnnex(farmerId: String, zootechnic: scala.List[Col], bs: Array[Byte], storedAlfalfa: Double, filePath: Option[String]): Either[String, Array[Byte]] = {
@@ -146,9 +150,9 @@ object pdf {
           getPdfContent(pdfDocument, 2).flatMap(content =>
             pTables(bytes, Seq(
               T(2,
-                H("Bovine > 2 ani", coef = 1.00, kg = 6), H("Bovine 6 luni - 2 ani", coef = 0.6, kg = 3.6), H("Bovine < 6 luni", cond = _.toInt > 5, coef = 0.4, kg = 2.4),
-                H("Ecvidee > 6 luni", coef = 1.00, kg = 6), H("Ecvidee < 6 luni", ignore), H("Ovine", cond = _.toInt > 30, coef = 0.15, kg = 0.898, isLast = true)),
-              T(3, H("Caprine", cond = _.toInt > 25, coef = 0.15, kg = 0.898), H("Scroafe rep. > 50kg", ignore), H("Alte porcine", ignore), H("Gaini ou", ignore), H("Alte pasari curte", ignore, isLast = true))
+                H("Bovine > 2 ani", coef = 1.00, kg = 6), H("Bovine 6 luni - 2 ani", coef = 0.6, kg = 3.6), H("Bovine < 6 luni", coef = 0.4, kg = 2.4),
+                H("Ecvidee > 6 luni", coef = 1.00, kg = 6), H("Ecvidee < 6 luni", ignore), H("Ovine", coef = 0.15, kg = 0.898, isLast = true)),
+              T(3, H("Caprine", coef = 0.15, kg = 0.898), H("Scroafe rep. > 50kg", ignore), H("Alte porcine", ignore), H("Gaini ou", ignore), H("Alte pasari curte", ignore, isLast = true))
             ),
               content
             ))
@@ -212,7 +216,7 @@ object pdf {
     doc.add(lineBreak(2, font = normal))
     doc.add(centeredText(doc, nameSurnameLabel + spaces(farmer)._1 + signLabel, font = normal))
     doc.add(centeredText(doc, farmer.fullName(capitalize = true) + spaces(farmer)._2 + IndexedSeq.fill(2 * signLabel.length)(".").mkString, font = normal))
-    doc.add(p(DateTimeFormat.forPattern("dd.MM.yyyy").print(DateTime.now), font = normal))
+    doc.add(p(DateTimeFormat.forPattern("dd.MM.yyyy").print(signDate()), font = normal))
     try {
       doc.close()
       if (filePath.isDefined)
@@ -226,6 +230,8 @@ object pdf {
       case e: Exception => Left(e.getMessage)
     }
   }
+
+  private def signDate(): DateTime  = if (DateTime.now.isAfter(DateTime.now.day(2).month(4))) DateTime.now.day(2).month(4) else DateTime.now
 
   private def spaces(farmer: Farmer): (String, String) = {
     val t = if (farmer.fullName().length > nameSurnameLabel.length)
@@ -303,23 +309,27 @@ object pdf {
     var t2, t6, t7 = 0
     var t8, t9 = 0.0
     val newConsumption = computeMonths.foldLeft(initConsumption) { (consumption, m) =>
-      t2 = c.v.getOrElse("0").toInt
-      t6 += c.v.getOrElse("0").toInt * m.days * m.fedFactor
-      t7 = c.v.getOrElse("0").toInt * m.fedFactor
-      t8 = c.v.getOrElse("0").toInt * c.h.coef
-      val monthlyConsumption = consumption.remainingAlfalfa min calConsumption(c, m, kgAvg)
-      t9 += monthlyConsumption
-      table.addCell(cell(m.name + " " + m.year.toString, w = 53, font = normal))
-        .addCell(cell(c.valueAsText, font = normal))
-        .addCell(cell("-", font = normal)).addCell(cell("-", font = normal))
-        .addCell(cell(c.valueAsText, font = normal))
-        .addCell(cell((c.v.getOrElse("0").toInt * m.days * m.fedFactor).toString, font = normal))
-        .addCell(cell((c.v.getOrElse("0").toInt * m.fedFactor).toString, font = normal))
-        .addCell(cell("%1.2f".format(c.v.getOrElse("0").toInt * c.h.coef), font = normal))
-        .addCell(cell("%1.4f".format(monthlyConsumption), font = normal))
-      Consumption.alfalfa.modify(alfalfa => 0.0 max (alfalfa - monthlyConsumption))(
-        Consumption.perMonth.modify((_: Map[String, Double]).updated(m.name, consumption.perMonth.getOrElse(m.name, 0.0) + monthlyConsumption))(consumption)
-      )
+      if(m.isApril()) {
+        consumption
+      } else {
+        t2 = c.v.getOrElse("0").toInt
+        t6 += c.v.getOrElse("0").toInt * m.days * m.fedFactor
+        t7 = c.v.getOrElse("0").toInt * m.fedFactor
+        t8 = c.v.getOrElse("0").toInt * c.h.coef
+        val monthlyConsumption = consumption.remainingAlfalfa min calConsumption(c, m, kgAvg)
+        t9 += monthlyConsumption
+        table.addCell(cell(m.name + " " + m.year.toString, w = 53, font = normal))
+          .addCell(cell(c.valueAsText, font = normal))
+          .addCell(cell("-", font = normal)).addCell(cell("-", font = normal))
+          .addCell(cell(c.valueAsText, font = normal))
+          .addCell(cell((c.v.getOrElse("0").toInt * m.days * m.fedFactor).toString, font = normal))
+          .addCell(cell((c.v.getOrElse("0").toInt * m.fedFactor).toString, font = normal))
+          .addCell(cell("%1.2f".format(c.v.getOrElse("0").toInt * c.h.coef), font = normal))
+          .addCell(cell("%1.4f".format(monthlyConsumption), font = normal))
+        Consumption.alfalfa.modify(alfalfa => 0.0 max (alfalfa - monthlyConsumption))(
+          Consumption.perMonth.modify((_: Map[String, Double]).updated(m.name, consumption.perMonth.getOrElse(m.name, 0.0) + monthlyConsumption))(consumption)
+        )
+      }
     }
     (newConsumption, table.addCell(cell("Total\nperioad\u0103/\nan", h = 51, w = 53, font = bold, bold = true))
       .addCell(cell(t2.toString, font = normal))
@@ -349,15 +359,19 @@ object pdf {
       .setMarginLeft(91f)
     var t2, t3, t5 = 0.0
     computeMonths.foldLeft(table) { (t, m) =>
-      t2 += initConsumption.hectares * m.alfalfaAvgPerHectar
-      t3 += m.alfalfaAvgPerHectar
-      t5 += initConsumption.perMonth.getOrElse(m.name, 0.0)
-      t.addCell(cell(m.name + " " + m.year.toString, w = 53, font = normal))
-        .addCell(cell("%1.2f".format(initConsumption.hectares * m.alfalfaAvgPerHectar), font = normal))
-        .addCell(cell("%1.2f".format(m.alfalfaAvgPerHectar), font = normal))
-        .addCell(cell("0", font = normal))
-        .addCell(cell("%1.4f".format(initConsumption.perMonth.getOrElse(m.name, 0.0)), font = normal))
-        .addCell(cell("%1.2f".format(initConsumption.hectares * m.alfalfaAvgPerHectar), font = normal))
+      if(m.isApril()) {
+        t
+      } else {
+        t2 += initConsumption.hectares * m.alfalfaAvgPerHectar
+        t3 += m.alfalfaAvgPerHectar
+        t5 += initConsumption.perMonth.getOrElse(m.name, 0.0)
+        t.addCell(cell(m.name + " " + m.year.toString, w = 53, font = normal))
+          .addCell(cell("%1.2f".format(initConsumption.hectares * m.alfalfaAvgPerHectar), font = normal))
+          .addCell(cell("%1.2f".format(m.alfalfaAvgPerHectar), font = normal))
+          .addCell(cell("0", font = normal))
+          .addCell(cell("%1.4f".format(initConsumption.perMonth.getOrElse(m.name, 0.0)), font = normal))
+          .addCell(cell("%1.2f".format(initConsumption.hectares * m.alfalfaAvgPerHectar), font = normal))
+      }
     }
     table.addCell(cell("Total\nperioad\u0103/\nan", h = 51, w = 53, font = bold, bold = true))
       .addCell(cell("%1.2f".format(t2), font = normal))
