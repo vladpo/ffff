@@ -162,11 +162,21 @@ object pdf {
   }
 
   private def alfalfa(pdfDoc: PdfDocument): Either[String, Double] = {
-    (getPdfContent(pdfDoc, 3), getPdfContent(pdfDoc, 4)) match {
-      case (Right(c1), Right(c2)) => pAlfalfa(c1 + c2)
-      case (Left(err), _) => Left(err)
-      case (_, Left(err)) => Left(err)
-    }
+    (4 to pdfDoc.getNumberOfPages).foldLeft(parseAlfalfa(pdfDoc, 3)) {
+      case (either, i)  => either.flatMap {
+        case (isAlfalfaPage1, alfalfa1) => if (isAlfalfaPage1) parseAlfalfa(pdfDoc, i).map {
+          case (isAlfalfaPage2, alfalfa2) => if (isAlfalfaPage2) (isAlfalfaPage2, alfalfa1 + alfalfa2) else (false, alfalfa1)
+        } else {
+          Right((isAlfalfaPage1, alfalfa1))
+        }
+      }
+    }.map(_._2)
+  }
+
+  private def parseAlfalfa(pdfDoc: PdfDocument, page: Int): Either[String, (Boolean, Double)] = {
+    getPdfContent(pdfDoc, page).flatMap(c => {
+      if (c.contains("I. A. DECLARA".foldLeft("I")((s, c) => s + '\u0000' + c))) pAlfalfa(c).map((true, _)) else Right((false, 0.0))
+    })
   }
 
   private def getPdfContent(pdfDoc: PdfDocument, page: Int): Either[String, String] = {
