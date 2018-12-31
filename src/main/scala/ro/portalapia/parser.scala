@@ -86,11 +86,16 @@ object parser {
 
   def pAlfalfa(pdfContent: String): Either[String, Double] = {
     var total = 0.0
-    val p1 = "[(\u00009\u00007\u00004\u00008)]"
     val p2 = "[(\u00009\u00007\u00004\u00007)]"
+    val p1 = "[(\u00009\u00007\u00004\u00008)]"
+    val p3 = "[(\u00009\u00007\u00004\u00009)]"
+    val p4 = "[(\u00009\u00007\u00004\u00001)]"
+    val p5 = "[(\u00009\u00007\u00004\u00007\u00001)]"
+    val p6 = "[(\u00009\u00007\u00004\u00008\u00001)]"
+    val p7 = "[(\u00009\u00007\u00004\u00009\u00001)]"
     val emptyCell = (notBracket ~ "[]").rep(exactly = 2)
     val double = notBracket ~ "[(" ~ CharIn('0' to '9', "\u0000,").rep(1).!.map(s => total += s.replace("\u0000", "").replace(",", ".").toDouble)
-    val r = P(notBracket ~ ("[]" | ((p1 | p2) ~ emptyCell ~ double)) | anyChar).rep
+    val r = P(notBracket ~ ("[]" | ((p1 | p2 | p3 | p4 | p5 | p6 | p7) ~ emptyCell ~ double)) | anyChar).rep
       .parse(pdfContent)
       .fold((_, _, log) => Left(log.traced.fullStack.mkString("\n")), (_, _) => Right(total))
 //    println(logged.mkString("\n"))

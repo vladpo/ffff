@@ -69,7 +69,7 @@ object Main extends JFXApp {
   password.text.onChange((_, _, newValue) => (fetchParcelButton: Button).disable = newValue.trim.isEmpty || user.text.value.trim.isEmpty)
 
   fetchParcelButton.onMouseClicked = _ => (for {
-    either <- fetchParcelContent(User(user.text.value.trim), Password(password.text.value.trim), 2017)
+    either <- fetchParcelContent(User(user.text.value.trim), Password(password.text.value.trim), 2018)
     cols <- zootechnic(either)
     _ <- IO.shift(scalaFxExecutionContext)
     nodes <- addZootechnicNodes(cols)
