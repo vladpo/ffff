@@ -2,11 +2,17 @@ package ro.portalapia
 
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.{HttpsURLConnection, SSLContext, TrustManager, X509TrustManager}
 
 import cats.effect.IO
 import com.softwaremill.sttp.SttpBackend
 import com.softwaremill.sttp.asynchttpclient.fs2.AsyncHttpClientFs2Backend
 import fs2.Stream
+import io.netty.handler.ssl.util.InsecureTrustManagerFactory
+import io.netty.handler.ssl.{SslContext, SslContextBuilder}
+import org.asynchttpclient.DefaultAsyncHttpClientConfig
 import ro.portalapia.http._
 import ro.portalapia.pdf.{fillAnnex, _}
 
@@ -21,7 +27,12 @@ import scalafx.stage.FileChooser
 
 object Main extends JFXApp {
 
-  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] = AsyncHttpClientFs2Backend[IO]()
+  implicit val client: SttpBackend[IO, Stream[IO, ByteBuffer]] =
+    AsyncHttpClientFs2Backend.usingConfig[IO](
+      new DefaultAsyncHttpClientConfig.Builder()
+        .setSslContext(SslContextBuilder.forClient().trustManager(InsecureTrustManagerFactory.INSTANCE).build())
+        .build()
+    )
   val scalaFxExecutionContext: ExecutionContext = ExecutionContext.fromExecutor((r: Runnable) => Platform.runLater(r))
 
   val user: TextField = loginTf()
